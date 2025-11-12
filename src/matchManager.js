@@ -317,8 +317,8 @@ class MatchManager {
     const sessionResult = await sql`
       SELECT id, game_id FROM mini_game_sessions WHERE session_code = ${match.sessionCode}
     `;
-    const session = sessionResult[0];
-    if (!session) {
+    const dbSession = sessionResult[0];
+    if (!dbSession) {
       console.error('Session not found for match:', matchId);
       return;
     }
@@ -343,14 +343,14 @@ class MatchManager {
           correct_cards, xp_earned, damage_dealt, damage_received,
           final_place, final_hp, completed_at
         ) VALUES (
-          ${session.id}, ${session.game_id}, ${winner.id},
+          ${dbSession.id}, ${dbSession.game_id}, ${winner.id},
           ${winnerUser.name}, ${winnerUser.surname}, ${winner.nickname},
           ${winnerUser.grade}, ${winnerUser.class}, ${winnerUser.number},
           ${winner.correctAnswers || 0}, ${(winner.correctAnswers || 0) * 10},
           ${winner.damageDealt || 0}, ${winner.damageReceived || 0},
           1, ${winner.hp}, CURRENT_TIMESTAMP
         ), (
-          ${session.id}, ${session.game_id}, ${loser.id},
+          ${dbSession.id}, ${dbSession.game_id}, ${loser.id},
           ${loserUser.name}, ${loserUser.surname}, ${loser.nickname},
           ${loserUser.grade}, ${loserUser.class}, ${loserUser.number},
           ${loser.correctAnswers || 0}, ${(loser.correctAnswers || 0) * 10},
