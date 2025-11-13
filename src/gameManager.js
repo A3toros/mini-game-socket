@@ -69,10 +69,25 @@ class GameManager {
       `;
       
       if (dbSession.length === 0) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Session not found'
-        }));
+        // Check if session exists but with different status
+        const anySession = await sql`
+          SELECT id, status, session_code
+          FROM mini_game_sessions
+          WHERE session_code = ${sessionCode}
+        `;
+        
+        if (anySession.length > 0) {
+          const session = anySession[0];
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: `Session found but status is '${session.status}'. Only 'waiting' or 'active' sessions can be joined.`
+          }));
+        } else {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: `Session '${sessionCode}' not found. It may have been deleted or the code is incorrect.`
+          }));
+        }
         return;
       }
       
@@ -122,7 +137,43 @@ class GameManager {
       nickname = student[0]?.nickname || studentName;
     }
 
-        // Add player to session
+        // Check if player already exists (reconnection scenario)
+    const existingPlayer = currentSession.players.get(studentId);
+    if (existingPlayer) {
+      // Update WebSocket for existing player (reconnection)
+      console.log(`[GameManager] Player ${studentId} reconnecting, updating WebSocket`);
+      existingPlayer.ws = ws;
+      // Don't reset their game state - keep their progress
+      
+      // If game has started and they were in lobby, send them to cards phase
+      if (currentSession.gameStarted && existingPlayer.inLobby) {
+        // Get random questions for this player
+        const gameQuestions = await sql`
+          SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, question_image
+          FROM mini_game_questions
+          WHERE game_id = ${currentSession.gameId}
+        `;
+        const randomQuestions = getRandomQuestions(gameQuestions, 3);
+        
+        ws.send(JSON.stringify({
+          type: 'start-card-phase',
+          questions: randomQuestions,
+          lateJoiner: true,
+          assignedCharacter: existingPlayer.selectedCharacter
+        }));
+      } else if (!currentSession.gameStarted) {
+        // Game hasn't started, send character selection
+        ws.send(JSON.stringify({
+          type: 'character-selection',
+          characters: ['archer', 'swordsman', 'wizard', 'enchantress', 'knight', 'musketeer'],
+          studentNickname: nickname
+        }));
+      }
+      
+      return; // Player already exists, just updated WebSocket
+    }
+
+    // Add new player to session
         currentSession.players.set(studentId, {
           ws,
           studentId,
