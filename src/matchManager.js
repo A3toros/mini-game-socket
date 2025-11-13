@@ -167,18 +167,40 @@ class MatchManager {
 
   // Handle spell hit (called from client collision detection)
   async handleSpellHit(matchId, spellId, hitPlayerId) {
+    console.log('[MatchManager] handleSpellHit called:', { matchId, spellId, hitPlayerId });
     const match = activeMatches.get(matchId);
-    if (!match) return;
+    if (!match) {
+      console.log('[MatchManager] Match not found:', matchId);
+      return;
+    }
 
     // Find spell
     const spellIndex = match.activeSpells.findIndex(s => s.id === spellId);
-    if (spellIndex === -1) return;
+    if (spellIndex === -1) {
+      console.log('[MatchManager] Spell not found in active spells:', spellId, 'Active spells:', match.activeSpells.map(s => s.id));
+      return;
+    }
 
     const spell = match.activeSpells[spellIndex];
     const hitPlayer = match[hitPlayerId];
     const caster = match[spell.owner];
 
-    if (!hitPlayer || !caster) return;
+    if (!hitPlayer) {
+      console.log('[MatchManager] Hit player not found:', hitPlayerId, 'Available:', Object.keys(match).filter(k => k !== 'activeSpells' && k !== 'roundTimer'));
+      return;
+    }
+    if (!caster) {
+      console.log('[MatchManager] Caster not found:', spell.owner);
+      return;
+    }
+
+    console.log('[MatchManager] Processing spell hit:', {
+      spellId,
+      hitPlayerId,
+      hitPlayerHp: hitPlayer.hp,
+      spellDamage: spell.damage,
+      caster: spell.owner
+    });
 
     // Remove spell
     match.activeSpells.splice(spellIndex, 1);
@@ -194,25 +216,40 @@ class MatchManager {
     hitPlayer.damageReceived += spell.damage;
 
     // Broadcast damage
+    console.log('[MatchManager] Broadcasting spell-hit to players:', {
+      player1Hp: match.player1.hp,
+      player2Hp: match.player2.hp,
+      hitPlayerId,
+      remainingHp: hitPlayer.hp
+    });
+    
     if (match.player1.ws.readyState === WebSocket.OPEN) {
-      match.player1.ws.send(JSON.stringify({
+      const message = {
         type: 'spell-hit',
         spellId,
         target: hitPlayerId,
         damage: spell.damage,
         remainingHp: hitPlayer.hp,
-        oldHp
-      }));
+        oldHp,
+        player1Hp: match.player1.hp,
+        player2Hp: match.player2.hp
+      };
+      console.log('[MatchManager] Sending to player1:', message);
+      match.player1.ws.send(JSON.stringify(message));
     }
     if (match.player2.ws.readyState === WebSocket.OPEN) {
-      match.player2.ws.send(JSON.stringify({
+      const message = {
         type: 'spell-hit',
         spellId,
         target: hitPlayerId,
         damage: spell.damage,
         remainingHp: hitPlayer.hp,
-        oldHp
-      }));
+        oldHp,
+        player1Hp: match.player1.hp,
+        player2Hp: match.player2.hp
+      };
+      console.log('[MatchManager] Sending to player2:', message);
+      match.player2.ws.send(JSON.stringify(message));
     }
 
     // Check for game end

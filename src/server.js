@@ -86,9 +86,13 @@ wss.on('connection', function connection(ws, req) {
   }));
 });
 
-// Message handler
-async function handleMessage(ws, data) {
-  const { type, payload } = data;
+  // Message handler
+  async function handleMessage(ws, data) {
+    const { type, payload } = data;
+    // Log all messages for debugging (except ping/pong)
+    if (type !== 'ping' && type !== 'pong') {
+      console.log('[Server] Received message:', { type, userId: ws.userId, sessionCode: ws.sessionCode, payload: type === 'spell-hit' ? { matchId: payload?.matchId, spellId: payload?.spellId, hitPlayerId: payload?.hitPlayerId } : '...' });
+    }
 
   switch (type) {
     case 'join-session':
@@ -132,6 +136,7 @@ async function handleMessage(ws, data) {
       break;
 
     case 'spell-hit':
+      console.log('[Server] Received spell-hit message:', { matchId: payload.matchId, spellId: payload.spellId, hitPlayerId: payload.hitPlayerId });
       await matchManager.handleSpellHit(payload.matchId, payload.spellId, payload.hitPlayerId);
       break;
 
