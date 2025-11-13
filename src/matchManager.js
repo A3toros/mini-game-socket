@@ -102,12 +102,29 @@ class MatchManager {
 
   // Handle spell cast
   async handleSpellCast(ws, payload) {
+    console.log('[MatchManager] handleSpellCast called:', { 
+      matchId: payload.matchId, 
+      spellType: payload.spellType, 
+      direction: payload.direction,
+      playerId: ws.playerId 
+    });
+    
     const { matchId, spellType, direction } = payload;
     const match = activeMatches.get(matchId);
-    if (!match || match.status !== 'active') return;
+    if (!match) {
+      console.log('[MatchManager] Match not found for spell-cast:', matchId);
+      return;
+    }
+    if (match.status !== 'active') {
+      console.log('[MatchManager] Match not active for spell-cast:', { matchId, status: match.status });
+      return;
+    }
 
     const player = match[ws.playerId];
-    if (!player) return;
+    if (!player) {
+      console.log('[MatchManager] Player not found for spell-cast:', { matchId, playerId: ws.playerId });
+      return;
+    }
 
     // Calculate spell damage
     const damage = this.calculateSpellDamage(spellType, player.damage);
@@ -150,18 +167,24 @@ class MatchManager {
 
     match.activeSpells.push(spell);
 
+    console.log('[MatchManager] Broadcasting spell-cast to players:', {
+      spellId: spell.id,
+      casterId: spell.casterId,
+      type: spell.type,
+      player1Ready: match.player1.ws.readyState === WebSocket.OPEN,
+      player2Ready: match.player2.ws.readyState === WebSocket.OPEN
+    });
+
     // Broadcast spell to both players
     if (match.player1.ws.readyState === WebSocket.OPEN) {
-      match.player1.ws.send(JSON.stringify({
-        type: 'spell-cast',
-        spell
-      }));
+      const message = { type: 'spell-cast', spell };
+      console.log('[MatchManager] Sending spell-cast to player1:', { spellId: spell.id, casterId: spell.casterId });
+      match.player1.ws.send(JSON.stringify(message));
     }
     if (match.player2.ws.readyState === WebSocket.OPEN) {
-      match.player2.ws.send(JSON.stringify({
-        type: 'spell-cast',
-        spell
-      }));
+      const message = { type: 'spell-cast', spell };
+      console.log('[MatchManager] Sending spell-cast to player2:', { spellId: spell.id, casterId: spell.casterId });
+      match.player2.ws.send(JSON.stringify(message));
     }
   }
 
