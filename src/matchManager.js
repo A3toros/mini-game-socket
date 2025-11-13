@@ -207,7 +207,19 @@ class MatchManager {
 
     // Apply damage
     const oldHp = hitPlayer.hp;
-    hitPlayer.hp = Math.max(0, hitPlayer.hp - spell.damage);
+    const damageAmount = spell.damage;
+    const calculatedNewHp = oldHp - damageAmount;
+    hitPlayer.hp = Math.max(0, calculatedNewHp);
+    const finalHp = hitPlayer.hp;
+
+    console.log('[MatchManager] HP Calculation:', {
+      hitPlayerId,
+      currentHp: oldHp,
+      damageAmount: damageAmount,
+      calculation: `${oldHp} - ${damageAmount} = ${calculatedNewHp}`,
+      finalHp: finalHp,
+      clamped: calculatedNewHp < 0 ? `(clamped from ${calculatedNewHp} to 0)` : '(no clamping needed)'
+    });
 
     // Track damage stats
     if (!caster.damageDealt) caster.damageDealt = 0;
@@ -220,7 +232,8 @@ class MatchManager {
       player1Hp: match.player1.hp,
       player2Hp: match.player2.hp,
       hitPlayerId,
-      remainingHp: hitPlayer.hp
+      remainingHp: hitPlayer.hp,
+      damage: damageAmount
     });
     
     if (match.player1.ws.readyState === WebSocket.OPEN) {
