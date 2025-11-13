@@ -112,15 +112,39 @@ class MatchManager {
     // Calculate spell damage
     const damage = this.calculateSpellDamage(spellType, player.damage);
 
-    // Create spell projectile
+    // Create spell projectile - offset from player position to avoid immediate collision
+    const offsetDistance = 40;
+    const opponent = ws.playerId === 'player1' ? match.player2 : match.player1;
+    
+    // Calculate offset direction (towards opponent)
+    let startPosition;
+    if (direction === 1) {
+      // Moving right/up - offset in that direction
+      startPosition = {
+        x: player.position.x + offsetDistance,
+        y: player.position.y
+      };
+    } else {
+      // Moving left/down - offset in that direction
+      startPosition = {
+        x: player.position.x - offsetDistance,
+        y: player.position.y
+      };
+    }
+    
+    // Calculate target position (opponent's position)
+    const targetPosition = { ...opponent.position };
+    
     const spell = {
       id: `spell_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       type: spellType,
-      startPosition: { ...player.position },
+      startPosition,
+      targetPosition,
       direction,
       damage,
       speed: spellType === 'fire_arrow' ? 10 : 5,
       owner: ws.playerId,
+      casterId: ws.playerId, // Also include casterId for client compatibility
       createdAt: Date.now()
     };
 

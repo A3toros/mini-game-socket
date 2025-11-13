@@ -127,6 +127,10 @@ async function handleMessage(ws, data) {
       await gameManager.handleStartGame(ws, payload);
       break;
 
+    case 'finish-game':
+      await gameManager.handleFinishGame(ws, payload);
+      break;
+
     case 'spell-hit':
       await matchManager.handleSpellHit(payload.matchId, payload.spellId, payload.hitPlayerId);
       break;

@@ -6,6 +6,25 @@ const sql = neon(process.env.NEON_DATABASE_URL);
 // Store active sessions in memory (can be moved to Redis for multi-instance)
 const activeSessions = new Map();
 
+// Helper function to shuffle array (Fisher-Yates algorithm)
+function shuffleArray(array) {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+// Helper function to get random questions
+function getRandomQuestions(questions, count = 3) {
+  if (questions.length <= count) {
+    return shuffleArray(questions);
+  }
+  const shuffled = shuffleArray(questions);
+  return shuffled.slice(0, count);
+}
+
 class GameManager {
   // Teacher creates a session
   async createSession(gameId, teacherId) {
@@ -59,12 +78,14 @@ class GameManager {
       
       // Recreate session in memory
       const s = dbSession[0];
+      // If status is 'active', game has already started
+      const gameStarted = s.status === 'active';
       activeSessions.set(sessionCode, {
         id: s.id,
         gameId: s.game_id,
         teacherId: s.teacher_id,
         status: s.status,
-        gameStarted: false, // Always start as false - teacher must explicitly start
+        gameStarted: gameStarted, // Set based on session status
         players: new Map(),
         teacherWs: null, // WebSocket for the teacher
         questions: [],
@@ -73,6 +94,11 @@ class GameManager {
     }
 
     const currentSession = activeSessions.get(sessionCode);
+    
+    // Update gameStarted flag if session status changed (e.g., loaded from DB)
+    if (currentSession && currentSession.status === 'active' && !currentSession.gameStarted) {
+      currentSession.gameStarted = true;
+    }
 
     // If teacher is joining, store their WebSocket
     if (ws.userRole === 'teacher') {
@@ -96,21 +122,23 @@ class GameManager {
       nickname = student[0]?.nickname || studentName;
     }
 
-    // Add player to session
-    currentSession.players.set(studentId, {
-      ws,
-      studentId,
-      studentName,
-      studentNickname: nickname, // Store nickname from database
-      selectedCharacter: null, // Will be set during character selection
-      inLobby: false, // Not in lobby yet
-      cardsAnswered: 0,
-      correctAnswers: 0,
-      damage: 5, // Base damage
-      hp: 200,
-      inQueue: false,
-      matchId: null
-    });
+        // Add player to session
+        currentSession.players.set(studentId, {
+          ws,
+          studentId,
+          studentName,
+          studentNickname: nickname, // Store nickname from database
+          selectedCharacter: null, // Will be set during character selection
+          inLobby: false, // Not in lobby yet
+          cardsAnswered: 0,
+          correctAnswers: 0,
+          damage: 5, // Base damage
+          hp: 200,
+          inQueue: false,
+          matchId: null,
+          damageDealt: 0, // Track damage dealt in battles
+          damageReceived: 0 // Track damage received in battles
+        });
 
     // Load questions if not loaded
     if (currentSession.questions.length === 0) {
@@ -124,19 +152,40 @@ class GameManager {
       currentSession.questions = questions;
     }
 
-    // Send character selection screen to student (before card phase)
-    ws.send(JSON.stringify({
-      type: 'character-selection',
-      characters: [
-        { id: 'archer', name: 'Archer', gender: 'men', preview: '/art/characters/men/Archer/Idle.png' },
-        { id: 'swordsman', name: 'Swordsman', gender: 'men', preview: '/art/characters/men/Swordsman/Idle.png' },
-        { id: 'wizard', name: 'Wizard', gender: 'men', preview: '/art/characters/men/Wizard/Idle.png' },
-        { id: 'enchantress', name: 'Enchantress', gender: 'women', preview: '/art/characters/women/Enchantress/Idle.png' },
-        { id: 'knight', name: 'Knight', gender: 'women', preview: '/art/characters/women/Knight/Idle.png' },
-        { id: 'musketeer', name: 'Musketeer', gender: 'women', preview: '/art/characters/women/Musketeer/Idle.png' }
-      ],
-      studentNickname: nickname
-    }));
+    // If game has already started, send student directly to card phase
+    if (currentSession.gameStarted || currentSession.status === 'active') {
+      // Assign a random character for late joiners
+      const characters = ['archer', 'swordsman', 'wizard', 'enchantress', 'knight', 'musketeer'];
+      const randomCharacter = characters[Math.floor(Math.random() * characters.length)];
+      const player = currentSession.players.get(studentId);
+      if (player) {
+        player.selectedCharacter = randomCharacter;
+        player.inLobby = true; // Mark as in lobby so they can participate
+      }
+      
+          // Send directly to card phase with random questions
+          const randomQuestions = getRandomQuestions(currentSession.questions, 3);
+          ws.send(JSON.stringify({
+            type: 'start-card-phase',
+            questions: randomQuestions, // Random 3 questions
+            lateJoiner: true, // Flag to indicate this is a late joiner
+            assignedCharacter: randomCharacter
+          }));
+    } else {
+      // Game hasn't started yet - send character selection screen
+      ws.send(JSON.stringify({
+        type: 'character-selection',
+        characters: [
+          { id: 'archer', name: 'Archer', gender: 'men', preview: '/art/characters/men/Archer/Idle.png' },
+          { id: 'swordsman', name: 'Swordsman', gender: 'men', preview: '/art/characters/men/Swordsman/Idle.png' },
+          { id: 'wizard', name: 'Wizard', gender: 'men', preview: '/art/characters/men/Wizard/Idle.png' },
+          { id: 'enchantress', name: 'Enchantress', gender: 'women', preview: '/art/characters/women/Enchantress/Idle.png' },
+          { id: 'knight', name: 'Knight', gender: 'women', preview: '/art/characters/women/Knight/Idle.png' },
+          { id: 'musketeer', name: 'Musketeer', gender: 'women', preview: '/art/characters/women/Musketeer/Idle.png' }
+        ],
+        studentNickname: nickname
+      }));
+    }
 
     // Notify teacher of new player (if teacher is connected)
     this.broadcastToTeacher(sessionCode, {
@@ -273,18 +322,131 @@ class GameManager {
     // Mark game as started
     session.gameStarted = true;
 
-    // Start card phase for all players in lobby
+    // Start card phase for all players in lobby with random questions
+    // Each player gets their own random set of 3 questions
     lobbyPlayers.forEach(player => {
       if (player.ws && player.ws.readyState === 1) { // WebSocket.OPEN
+        const randomQuestions = getRandomQuestions(session.questions, 3);
         player.ws.send(JSON.stringify({
           type: 'start-card-phase',
-          questions: session.questions.slice(0, 3) // First 3 questions
+          questions: randomQuestions // Random 3 questions for each player
         }));
       }
     });
 
     // Update session status
     session.status = 'active';
+
+    // Notify teacher that game started
+    if (session.teacherWs && session.teacherWs.readyState === 1) {
+      session.teacherWs.send(JSON.stringify({
+        type: 'game-started',
+        sessionCode
+      }));
+    }
+
+    // Start sending player stats updates to teacher
+    this.startPlayerStatsUpdates(sessionCode);
+  }
+
+  // Start periodic player stats updates for teacher
+  startPlayerStatsUpdates(sessionCode) {
+    const session = activeSessions.get(sessionCode);
+    if (!session) return;
+
+    // Clear any existing interval
+    if (session.statsUpdateInterval) {
+      clearInterval(session.statsUpdateInterval);
+    }
+
+    // Send stats every 2 seconds
+    session.statsUpdateInterval = setInterval(() => {
+      this.sendPlayerStatsToTeacher(sessionCode);
+    }, 2000);
+
+    // Send initial stats immediately
+    this.sendPlayerStatsToTeacher(sessionCode);
+  }
+
+  // Send player stats to teacher
+  sendPlayerStatsToTeacher(sessionCode) {
+    const session = activeSessions.get(sessionCode);
+    if (!session || !session.teacherWs) return;
+
+    if (session.teacherWs.readyState !== 1) return; // WebSocket.OPEN
+
+    const stats = Array.from(session.players.values()).map(player => ({
+      studentId: player.studentId,
+      studentName: player.studentName,
+      studentNickname: player.studentNickname,
+      selectedCharacter: player.selectedCharacter,
+      correctAnswers: player.correctAnswers || 0,
+      cardsAnswered: player.cardsAnswered || 0,
+      damage: player.damage || 5,
+      hp: player.hp || 200,
+      damageDealt: player.damageDealt || 0,
+      damageReceived: player.damageReceived || 0
+    }));
+
+    session.teacherWs.send(JSON.stringify({
+      type: 'player-stats-update',
+      stats
+    }));
+  }
+
+  // Handle finish game (from teacher)
+  async handleFinishGame(ws, payload) {
+    const { sessionCode } = payload;
+    const session = activeSessions.get(sessionCode);
+    if (!session) return;
+
+    // Check if user is teacher
+    if (ws.userRole !== 'teacher') {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Only teacher can finish the game'
+      }));
+      return;
+    }
+
+    // Stop stats updates
+    if (session.statsUpdateInterval) {
+      clearInterval(session.statsUpdateInterval);
+      session.statsUpdateInterval = null;
+    }
+
+    // Notify all players that game is finished
+    session.players.forEach(player => {
+      if (player.ws && player.ws.readyState === 1) {
+        player.ws.send(JSON.stringify({
+          type: 'game-finished',
+          message: 'Teacher has finished the game'
+        }));
+        // Close player connections
+        player.ws.close();
+      }
+    });
+
+    // Update session status in database
+    await sql`
+      UPDATE mini_game_sessions
+      SET status = 'completed'
+      WHERE session_code = ${sessionCode}
+    `;
+
+    // Notify teacher
+    ws.send(JSON.stringify({
+      type: 'game-finished',
+      message: 'Game finished successfully'
+    }));
+
+    // Close teacher connection
+    if (session.teacherWs && session.teacherWs.readyState === 1) {
+      session.teacherWs.close();
+    }
+
+    // Clean up session
+    activeSessions.delete(sessionCode);
   }
 
   // Handle card answer
