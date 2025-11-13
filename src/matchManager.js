@@ -338,8 +338,8 @@ class MatchManager {
     if (winnerUser && loserUser) {
       await sql`
         INSERT INTO mini_game_results (
-          session_id, game_id, student_id, student_name, student_surname,
-          student_nickname, grade, class, number,
+          session_id, game_id, student_id, name, surname,
+          nickname, grade, class, number,
           correct_cards, xp_earned, damage_dealt, damage_received,
           final_place, final_hp, completed_at
         ) VALUES (

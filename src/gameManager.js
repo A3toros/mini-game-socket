@@ -25,7 +25,9 @@ class GameManager {
       gameId,
       teacherId,
       status: 'waiting',
+      gameStarted: false, // Flag to track if teacher has started the game
       players: new Map(),
+      teacherWs: null, // WebSocket for the teacher
       questions: [],
       createdAt: session.created_at
     });
@@ -62,13 +64,28 @@ class GameManager {
         gameId: s.game_id,
         teacherId: s.teacher_id,
         status: s.status,
+        gameStarted: false, // Always start as false - teacher must explicitly start
         players: new Map(),
+        teacherWs: null, // WebSocket for the teacher
         questions: [],
         createdAt: new Date()
       });
     }
 
     const currentSession = activeSessions.get(sessionCode);
+
+    // If teacher is joining, store their WebSocket
+    if (ws.userRole === 'teacher') {
+      currentSession.teacherWs = ws;
+      // Send initial lobby update to teacher
+      this.broadcastLobbyUpdate(sessionCode);
+      ws.send(JSON.stringify({
+        type: 'connected',
+        sessionCode: sessionCode,
+        userId: ws.userId
+      }));
+      return; // Don't add teacher as a player
+    }
 
     // Get student nickname from database if not provided
     let nickname = studentNickname;
@@ -86,6 +103,7 @@ class GameManager {
       studentName,
       studentNickname: nickname, // Store nickname from database
       selectedCharacter: null, // Will be set during character selection
+      inLobby: false, // Not in lobby yet
       cardsAnswered: 0,
       correctAnswers: 0,
       damage: 5, // Base damage
@@ -141,19 +159,132 @@ class GameManager {
 
     // Store selected character
     player.selectedCharacter = characterId;
+    player.inLobby = false; // Not in lobby yet
 
-    // Confirm selection and proceed to card phase
+    // Confirm selection (don't start card phase yet - wait for lobby join)
     ws.send(JSON.stringify({
       type: 'character-selected',
       characterId,
       studentNickname: player.studentNickname
     }));
+  }
 
-    // Start card phase with first 3 questions
+  // Handle join lobby
+  async handleJoinLobby(ws, payload) {
+    const { sessionCode, studentId } = payload;
+    const session = activeSessions.get(sessionCode);
+    if (!session) return;
+
+    const player = session.players.get(studentId);
+    if (!player) return;
+
+    // Check if character is selected
+    if (!player.selectedCharacter) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Please select a character first'
+      }));
+      return;
+    }
+
+    // Add to lobby
+    player.inLobby = true;
+
+    // Get all players in lobby
+    const lobbyPlayers = Array.from(session.players.values())
+      .filter(p => p.inLobby)
+      .map(p => ({
+        studentId: p.studentId,
+        studentName: p.studentName,
+        studentNickname: p.studentNickname,
+        selectedCharacter: p.selectedCharacter
+      }));
+
+    // Confirm lobby join
     ws.send(JSON.stringify({
-      type: 'start-card-phase',
-      questions: session.questions.slice(0, 3) // First 3 questions
+      type: 'lobby-joined',
+      players: lobbyPlayers
     }));
+
+    // Broadcast lobby update to all players (including teacher)
+    this.broadcastLobbyUpdate(sessionCode);
+  }
+
+  // Broadcast lobby update to all players and teacher
+  broadcastLobbyUpdate(sessionCode) {
+    const session = activeSessions.get(sessionCode);
+    if (!session) return;
+
+    const lobbyPlayers = Array.from(session.players.values())
+      .filter(p => p.inLobby)
+      .map(p => ({
+        studentId: p.studentId,
+        studentName: p.studentName,
+        studentNickname: p.studentNickname,
+        selectedCharacter: p.selectedCharacter
+      }));
+
+    // Send to all players in session
+    session.players.forEach(player => {
+      if (player.ws && player.ws.readyState === 1) { // WebSocket.OPEN
+        player.ws.send(JSON.stringify({
+          type: 'lobby-update',
+          players: lobbyPlayers
+        }));
+      }
+    });
+
+    // Also send to teacher if connected
+    if (session.teacherWs && session.teacherWs.readyState === 1) { // WebSocket.OPEN
+      session.teacherWs.send(JSON.stringify({
+        type: 'lobby-update',
+        players: lobbyPlayers
+      }));
+    }
+  }
+
+  // Handle start game (from teacher)
+  async handleStartGame(ws, payload) {
+    const { sessionCode } = payload;
+    const session = activeSessions.get(sessionCode);
+    if (!session) return;
+
+    // Check if user is teacher
+    if (ws.userRole !== 'teacher') {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Only teacher can start the game'
+      }));
+      return;
+    }
+
+    // Get all players in lobby
+    const lobbyPlayers = Array.from(session.players.values())
+      .filter(p => p.inLobby);
+
+    if (lobbyPlayers.length === 0) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'No players in lobby'
+      }));
+      return;
+    }
+
+    // Mark game as started
+    session.gameStarted = true;
+
+    // Start card phase for all players in lobby
+    lobbyPlayers.forEach(player => {
+      if (player.ws && player.ws.readyState === 1) { // WebSocket.OPEN
+        player.ws.send(JSON.stringify({
+          type: 'start-card-phase',
+          questions: session.questions.slice(0, 3) // First 3 questions
+        }));
+      }
+    });
+
+    // Update session status
+    session.status = 'active';
   }
 
   // Handle card answer

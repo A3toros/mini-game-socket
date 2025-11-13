@@ -119,8 +119,21 @@ async function handleMessage(ws, data) {
       await gameManager.handleCharacterSelection(ws, payload);
       break;
 
+    case 'join-lobby':
+      await gameManager.handleJoinLobby(ws, payload);
+      break;
+
+    case 'start-game':
+      await gameManager.handleStartGame(ws, payload);
+      break;
+
     case 'spell-hit':
       await matchManager.handleSpellHit(payload.matchId, payload.spellId, payload.hitPlayerId);
+      break;
+
+    case 'ping':
+      // Handle ping/pong for connection health
+      ws.send(JSON.stringify({ type: 'pong' }));
       break;
 
     default:
