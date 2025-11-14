@@ -147,7 +147,6 @@ wss.on('connection', function connection(ws, req) {
       break;
 
     case 'spell-hit':
-      console.log('[Server] Received spell-hit message:', { matchId: payload.matchId, spellId: payload.spellId, hitPlayerId: payload.hitPlayerId });
       await matchManager.handleSpellHit(payload.matchId, payload.spellId, payload.hitPlayerId);
       break;
 
