@@ -107,7 +107,21 @@ class MatchManager {
   async handleSpellCast(ws, payload) {
     const { matchId, spellType, direction } = payload;
     const match = activeMatches.get(matchId);
-    if (!match || match.status !== 'active') return;
+    console.log('[MatchManager] handleSpellCast called:', {
+      matchId,
+      matchExists: !!match,
+      matchStatus: match?.status,
+      playerId: ws.playerId,
+      spellType
+    });
+    if (!match || match.status !== 'active') {
+      console.warn('[MatchManager] Spell cast rejected:', {
+        matchExists: !!match,
+        matchStatus: match?.status,
+        expectedStatus: 'active'
+      });
+      return;
+    }
 
     const player = match[ws.playerId];
     if (!player) return;
@@ -167,33 +181,53 @@ class MatchManager {
 
     // Broadcast spell to both players
     const message = { type: 'spell-cast', spell };
-    console.log('[MatchManager] Broadcasting spell-cast:', {
+    console.log('[MatchManager] ========== BROADCASTING spell-cast ==========');
+    console.log('[MatchManager] Spell details:', {
       spellId: spell.id,
+      spellType: spell.type,
+      casterId: spell.casterId,
+      player1Id: match.player1.id,
+      player2Id: match.player2.id
+    });
+    console.log('[MatchManager] WebSocket states:', {
       player1WsState: match.player1.ws?.readyState,
       player2WsState: match.player2.ws?.readyState,
       player1WsExists: !!match.player1.ws,
-      player2WsExists: !!match.player2.ws
+      player2WsExists: !!match.player2.ws,
+      player1WsType: typeof match.player1.ws,
+      player2WsType: typeof match.player2.ws
     });
     
-    if (match.player1.ws?.readyState === WebSocket.OPEN) {
-      console.log('[MatchManager] Sending spell-cast to player1');
-      match.player1.ws.send(JSON.stringify(message));
-    } else {
-      console.warn('[MatchManager] Cannot send to player1:', {
-        hasWs: !!match.player1.ws,
-        readyState: match.player1.ws?.readyState
-      });
+    try {
+      if (match.player1.ws?.readyState === WebSocket.OPEN) {
+        console.log('[MatchManager] ✅ Sending spell-cast to player1');
+        match.player1.ws.send(JSON.stringify(message));
+        console.log('[MatchManager] ✅ Sent to player1 successfully');
+      } else {
+        console.warn('[MatchManager] ❌ Cannot send to player1:', {
+          hasWs: !!match.player1.ws,
+          readyState: match.player1.ws?.readyState,
+          wsType: typeof match.player1.ws
+        });
+      }
+      
+      if (match.player2.ws?.readyState === WebSocket.OPEN) {
+        console.log('[MatchManager] ✅ Sending spell-cast to player2');
+        match.player2.ws.send(JSON.stringify(message));
+        console.log('[MatchManager] ✅ Sent to player2 successfully');
+      } else {
+        console.warn('[MatchManager] ❌ Cannot send to player2:', {
+          hasWs: !!match.player2.ws,
+          readyState: match.player2.ws?.readyState,
+          wsType: typeof match.player2.ws
+        });
+      }
+    } catch (error) {
+      console.error('[MatchManager] ❌ ERROR during broadcast:', error);
+      console.error('[MatchManager] Error stack:', error.stack);
     }
     
-    if (match.player2.ws?.readyState === WebSocket.OPEN) {
-      console.log('[MatchManager] Sending spell-cast to player2');
-      match.player2.ws.send(JSON.stringify(message));
-    } else {
-      console.warn('[MatchManager] Cannot send to player2:', {
-        hasWs: !!match.player2.ws,
-        readyState: match.player2.ws?.readyState
-      });
-    }
+    console.log('[MatchManager] ========== BROADCAST COMPLETE ==========');
   }
 
   // Handle spell hit (called from client collision detection)
@@ -251,17 +285,17 @@ class MatchManager {
     // Clear previous round spells
     match.activeSpells = [];
 
-    // Set round timer (10 seconds)
+    // Set round timer (20 seconds)
     match.roundTimer = setTimeout(() => {
       this.endRound(matchId);
-    }, 10000);
+    }, 20000);
 
     // Notify both players
     if (match.player1.ws.readyState === WebSocket.OPEN) {
       match.player1.ws.send(JSON.stringify({
         type: 'round-start',
         round: match.currentRound,
-        duration: 10000,
+        duration: 20000,
         player1Hp: match.player1.hp,
         player2Hp: match.player2.hp
       }));
@@ -270,7 +304,7 @@ class MatchManager {
       match.player2.ws.send(JSON.stringify({
         type: 'round-start',
         round: match.currentRound,
-        duration: 10000,
+        duration: 20000,
         player1Hp: match.player1.hp,
         player2Hp: match.player2.hp
       }));
@@ -278,7 +312,7 @@ class MatchManager {
   }
 
   // End round
-  endRound(matchId) {
+  async endRound(matchId) {
     const match = activeMatches.get(matchId);
     if (!match) return;
 
@@ -310,16 +344,68 @@ class MatchManager {
       }));
     }
 
-    // Start next round after 3 second break (if both players still alive)
-    if (match.player1.hp > 0 && match.player2.hp > 0) {
-      setTimeout(() => {
-        this.startRound(matchId);
-      }, 3000);
-    } else {
-      // Game ended during round
+    // After round ends, send players back to card phase for new questions
+    // Then they can queue again for another match
+    const gameManager = require('./gameManager');
+    const session = gameManager.getSession(match.sessionCode);
+    
+    // If someone died, end the match properly first
+    if (match.player1.hp <= 0 || match.player2.hp <= 0) {
       const winnerId = match.player1.hp > 0 ? match.player1.id : match.player2.id;
-      this.endMatch(matchId, winnerId);
+      await this.endMatch(matchId, winnerId);
+      return; // endMatch handles cleanup and sending messages
     }
+    
+    // Both players alive - send them back to card phase
+    if (session) {
+      // Update player HP in session
+      const p1 = session.players.get(match.player1.id);
+      const p2 = session.players.get(match.player2.id);
+      
+      if (p1) {
+        p1.hp = match.player1.hp;
+        p1.inQueue = false; // Remove from queue
+        p1.matchId = null; // Clear match reference
+        p1.cardsAnswered = 0; // Reset for new card phase
+        p1.correctAnswers = 0; // Reset for new card phase
+        p1.damage = 5; // Reset base damage
+      }
+      if (p2) {
+        p2.hp = match.player2.hp;
+        p2.inQueue = false; // Remove from queue
+        p2.matchId = null; // Clear match reference
+        p2.cardsAnswered = 0; // Reset for new card phase
+        p2.correctAnswers = 0; // Reset for new card phase
+        p2.damage = 5; // Reset base damage
+      }
+      
+      // Import getRandomQuestions helper from gameManager
+      // We'll use a simple shuffle here since we can't easily import the function
+      const getRandomQuestions = (questions, count) => {
+        const shuffled = [...questions].sort(() => 0.5 - Math.random());
+        return shuffled.slice(0, Math.min(count, questions.length));
+      };
+      
+      const randomQuestions1 = getRandomQuestions(session.questions, 3);
+      const randomQuestions2 = getRandomQuestions(session.questions, 3);
+      
+      if (match.player1.ws?.readyState === WebSocket.OPEN) {
+        match.player1.ws.send(JSON.stringify({
+          type: 'start-card-phase',
+          questions: randomQuestions1
+        }));
+      }
+      
+      if (match.player2.ws?.readyState === WebSocket.OPEN) {
+        match.player2.ws.send(JSON.stringify({
+          type: 'start-card-phase',
+          questions: randomQuestions2
+        }));
+      }
+    }
+    
+    // Cleanup match
+    activeMatches.delete(matchId);
   }
 
   // End match
