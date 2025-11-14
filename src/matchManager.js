@@ -135,6 +135,25 @@ class MatchManager {
       return;
     }
     console.log('[MatchManager] Player found:', { playerId: ws.playerId, hasWs: !!player.ws, wsReadyState: player.ws?.readyState });
+    
+    // Check cooldown (1 second = 1000ms)
+    const now = Date.now();
+    const lastSpellCast = player.lastSpellCastTime || 0;
+    const timeSinceLastCast = now - lastSpellCast;
+    const cooldownDuration = 1000; // 1 second
+    
+    if (timeSinceLastCast < cooldownDuration) {
+      console.warn('[MatchManager] Spell cast on cooldown:', {
+        playerId: ws.playerId,
+        timeSinceLastCast,
+        remainingCooldown: cooldownDuration - timeSinceLastCast
+      });
+      // Don't send error to client, just ignore the spell cast
+      return;
+    }
+    
+    // Update last spell cast time
+    player.lastSpellCastTime = now;
 
     // Calculate spell damage
     const damage = this.calculateSpellDamage(spellType, player.damage);
