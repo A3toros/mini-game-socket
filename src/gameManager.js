@@ -538,6 +538,9 @@ class GameManager {
         finalDamage: player.damage
       }));
     }
+    
+    // Update teacher stats immediately when card is answered
+    this.sendPlayerStatsToTeacher(sessionCode);
   }
 
   // Broadcast to teacher

@@ -251,6 +251,27 @@ class MatchManager {
     // Track damage stats
     caster.damageDealt = (caster.damageDealt || 0) + spell.damage;
     hitPlayer.damageReceived = (hitPlayer.damageReceived || 0) + spell.damage;
+    
+    // Update session player stats for leaderboard
+    const gameManager = require('./gameManager');
+    const session = gameManager.getSession(match.sessionCode);
+    if (session) {
+      const casterPlayer = session.players.get(caster.id);
+      const hitPlayerSession = session.players.get(hitPlayer.id);
+      
+      if (casterPlayer) {
+        casterPlayer.damageDealt = (casterPlayer.damageDealt || 0) + spell.damage;
+        casterPlayer.hp = caster.hp; // Update HP from match
+      }
+      
+      if (hitPlayerSession) {
+        hitPlayerSession.damageReceived = (hitPlayerSession.damageReceived || 0) + spell.damage;
+        hitPlayerSession.hp = hitPlayer.hp; // Update HP from match
+      }
+      
+      // Trigger immediate stats update to teacher
+      gameManager.sendPlayerStatsToTeacher(match.sessionCode);
+    }
 
     // Broadcast HP update
     const message = {
