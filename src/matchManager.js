@@ -102,29 +102,39 @@ class MatchManager {
 
   // Handle spell cast
   async handleSpellCast(ws, payload) {
+    console.log('[MatchManager] ========== handleSpellCast CALLED ==========');
     console.log('[MatchManager] handleSpellCast called:', { 
       matchId: payload.matchId, 
       spellType: payload.spellType, 
       direction: payload.direction,
-      playerId: ws.playerId 
+      playerId: ws.playerId,
+      wsReadyState: ws.readyState,
+      wsMatchId: ws.matchId
     });
     
     const { matchId, spellType, direction } = payload;
     const match = activeMatches.get(matchId);
     if (!match) {
-      console.log('[MatchManager] Match not found for spell-cast:', matchId);
+      console.error('[MatchManager] ========== ERROR: Match not found ==========');
+      console.error('[MatchManager] Match not found for spell-cast:', matchId);
+      console.error('[MatchManager] Available match IDs:', Array.from(activeMatches.keys()));
       return;
     }
+    console.log('[MatchManager] Match found:', { matchId, status: match.status, hasPlayer1: !!match.player1, hasPlayer2: !!match.player2 });
+    
     if (match.status !== 'active') {
-      console.log('[MatchManager] Match not active for spell-cast:', { matchId, status: match.status });
+      console.error('[MatchManager] ========== ERROR: Match not active ==========');
+      console.error('[MatchManager] Match not active for spell-cast:', { matchId, status: match.status });
       return;
     }
 
     const player = match[ws.playerId];
     if (!player) {
-      console.log('[MatchManager] Player not found for spell-cast:', { matchId, playerId: ws.playerId });
+      console.error('[MatchManager] ========== ERROR: Player not found ==========');
+      console.error('[MatchManager] Player not found for spell-cast:', { matchId, playerId: ws.playerId, availableKeys: Object.keys(match) });
       return;
     }
+    console.log('[MatchManager] Player found:', { playerId: ws.playerId, hasWs: !!player.ws, wsReadyState: player.ws?.readyState });
 
     // Calculate spell damage
     const damage = this.calculateSpellDamage(spellType, player.damage);
@@ -167,24 +177,62 @@ class MatchManager {
 
     match.activeSpells.push(spell);
 
+    console.log('[MatchManager] ========== BROADCASTING SPELL-CAST ==========');
     console.log('[MatchManager] Broadcasting spell-cast to players:', {
       spellId: spell.id,
       casterId: spell.casterId,
       type: spell.type,
-      player1Ready: match.player1.ws.readyState === WebSocket.OPEN,
-      player2Ready: match.player2.ws.readyState === WebSocket.OPEN
+      player1Ready: match.player1.ws?.readyState === WebSocket.OPEN,
+      player2Ready: match.player2.ws?.readyState === WebSocket.OPEN,
+      player1WsState: match.player1.ws?.readyState,
+      player2WsState: match.player2.ws?.readyState
     });
 
     // Broadcast spell to both players
-    if (match.player1.ws.readyState === WebSocket.OPEN) {
+    if (match.player1.ws && match.player1.ws.readyState === WebSocket.OPEN) {
       const message = { type: 'spell-cast', spell };
-      console.log('[MatchManager] Sending spell-cast to player1:', { spellId: spell.id, casterId: spell.casterId });
-      match.player1.ws.send(JSON.stringify(message));
+      console.log('[MatchManager] ========== SENDING TO PLAYER1 ==========');
+      console.log('[MatchManager] Sending spell-cast to player1:', { 
+        spellId: spell.id, 
+        casterId: spell.casterId,
+        messageType: message.type,
+        spellType: spell.type
+      });
+      try {
+        match.player1.ws.send(JSON.stringify(message));
+        console.log('[MatchManager] Successfully sent spell-cast to player1');
+      } catch (error) {
+        console.error('[MatchManager] Error sending to player1:', error);
+      }
+    } else {
+      console.warn('[MatchManager] Cannot send to player1:', {
+        hasWs: !!match.player1.ws,
+        readyState: match.player1.ws?.readyState,
+        expectedState: WebSocket.OPEN
+      });
     }
-    if (match.player2.ws.readyState === WebSocket.OPEN) {
+    
+    if (match.player2.ws && match.player2.ws.readyState === WebSocket.OPEN) {
       const message = { type: 'spell-cast', spell };
-      console.log('[MatchManager] Sending spell-cast to player2:', { spellId: spell.id, casterId: spell.casterId });
-      match.player2.ws.send(JSON.stringify(message));
+      console.log('[MatchManager] ========== SENDING TO PLAYER2 ==========');
+      console.log('[MatchManager] Sending spell-cast to player2:', { 
+        spellId: spell.id, 
+        casterId: spell.casterId,
+        messageType: message.type,
+        spellType: spell.type
+      });
+      try {
+        match.player2.ws.send(JSON.stringify(message));
+        console.log('[MatchManager] Successfully sent spell-cast to player2');
+      } catch (error) {
+        console.error('[MatchManager] Error sending to player2:', error);
+      }
+    } else {
+      console.warn('[MatchManager] Cannot send to player2:', {
+        hasWs: !!match.player2.ws,
+        readyState: match.player2.ws?.readyState,
+        expectedState: WebSocket.OPEN
+      });
     }
   }
 

@@ -112,7 +112,18 @@ wss.on('connection', function connection(ws, req) {
       break;
 
     case 'spell-cast':
-      await matchManager.handleSpellCast(ws, payload);
+      console.log('[Server] ========== RECEIVED spell-cast MESSAGE ==========');
+      console.log('[Server] spell-cast payload:', payload);
+      console.log('[Server] ws.playerId:', ws.playerId);
+      console.log('[Server] ws.matchId:', ws.matchId);
+      try {
+        await matchManager.handleSpellCast(ws, payload);
+        console.log('[Server] handleSpellCast completed successfully');
+      } catch (error) {
+        console.error('[Server] ========== ERROR in handleSpellCast ==========');
+        console.error('[Server] Error:', error);
+        console.error('[Server] Stack:', error.stack);
+      }
       break;
 
     case 'round-ready':
