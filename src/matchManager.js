@@ -86,12 +86,15 @@ class MatchManager {
     const player = match[ws.playerId];
     if (!player) return;
 
+    // Update WebSocket reference (in case of reconnection)
+    player.ws = ws;
+
     // Update position (validate bounds - own half only)
     player.position = this.validatePosition(position, ws.playerId);
 
     // Broadcast to opponent
     const opponent = ws.playerId === 'player1' ? match.player2 : match.player1;
-    if (opponent.ws.readyState === WebSocket.OPEN) {
+    if (opponent.ws?.readyState === WebSocket.OPEN) {
       opponent.ws.send(JSON.stringify({
         type: 'opponent-move',
         position: player.position,
@@ -155,13 +158,41 @@ class MatchManager {
 
     match.activeSpells.push(spell);
 
+    // Update WebSocket reference for the caster (in case of reconnection)
+    if (ws.playerId === 'player1') {
+      match.player1.ws = ws;
+    } else {
+      match.player2.ws = ws;
+    }
+
     // Broadcast spell to both players
     const message = { type: 'spell-cast', spell };
+    console.log('[MatchManager] Broadcasting spell-cast:', {
+      spellId: spell.id,
+      player1WsState: match.player1.ws?.readyState,
+      player2WsState: match.player2.ws?.readyState,
+      player1WsExists: !!match.player1.ws,
+      player2WsExists: !!match.player2.ws
+    });
+    
     if (match.player1.ws?.readyState === WebSocket.OPEN) {
+      console.log('[MatchManager] Sending spell-cast to player1');
       match.player1.ws.send(JSON.stringify(message));
+    } else {
+      console.warn('[MatchManager] Cannot send to player1:', {
+        hasWs: !!match.player1.ws,
+        readyState: match.player1.ws?.readyState
+      });
     }
+    
     if (match.player2.ws?.readyState === WebSocket.OPEN) {
+      console.log('[MatchManager] Sending spell-cast to player2');
       match.player2.ws.send(JSON.stringify(message));
+    } else {
+      console.warn('[MatchManager] Cannot send to player2:', {
+        hasWs: !!match.player2.ws,
+        readyState: match.player2.ws?.readyState
+      });
     }
   }
 
