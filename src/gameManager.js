@@ -141,13 +141,17 @@ class GameManager {
     const existingPlayer = currentSession.players.get(studentId);
     if (existingPlayer) {
       // Update WebSocket for existing player (reconnection)
-      console.log(`[GameManager] Player ${studentId} reconnecting, updating WebSocket`);
+      console.log(`[GameManager] Player ${studentId} reconnecting, updating WebSocket`, {
+        gameStarted: currentSession.gameStarted,
+        inLobby: existingPlayer.inLobby,
+        selectedCharacter: existingPlayer.selectedCharacter
+      });
       existingPlayer.ws = ws;
       // Don't reset their game state - keep their progress
       
-      // If game has started and they were in lobby, send them to cards phase
+      // Determine where to send reconnecting player based on their state
       if (currentSession.gameStarted && existingPlayer.inLobby) {
-        // Get random questions for this player
+        // Game has started and they were in lobby - send them to cards phase
         const gameQuestions = await sql`
           SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, question_image
           FROM mini_game_questions
@@ -161,8 +165,32 @@ class GameManager {
           lateJoiner: true,
           assignedCharacter: existingPlayer.selectedCharacter
         }));
+      } else if (!currentSession.gameStarted && existingPlayer.inLobby) {
+        // Game hasn't started but they were in lobby - send them back to lobby
+        const lobbyPlayers = Array.from(currentSession.players.values())
+          .filter(p => p.inLobby)
+          .map(p => ({
+            studentId: p.studentId,
+            studentName: p.studentName,
+            studentNickname: p.studentNickname,
+            selectedCharacter: p.selectedCharacter
+          }));
+        
+        ws.send(JSON.stringify({
+          type: 'lobby-joined',
+          players: lobbyPlayers
+        }));
+      } else if (!currentSession.gameStarted && existingPlayer.selectedCharacter) {
+        // Game hasn't started, they selected a character but not in lobby - send character selection
+        // (they can join lobby again)
+        ws.send(JSON.stringify({
+          type: 'character-selection',
+          characters: ['archer', 'swordsman', 'wizard', 'enchantress', 'knight', 'musketeer'],
+          studentNickname: nickname,
+          preselectedCharacter: existingPlayer.selectedCharacter // Show their previous selection
+        }));
       } else if (!currentSession.gameStarted) {
-        // Game hasn't started, send character selection
+        // Game hasn't started and no character selected - send character selection
         ws.send(JSON.stringify({
           type: 'character-selection',
           characters: ['archer', 'swordsman', 'wizard', 'enchantress', 'knight', 'musketeer'],
